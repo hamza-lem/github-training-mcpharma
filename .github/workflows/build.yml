@@ -1,0 +1,10 @@
+name : Build
+
+on: push 
+
+jobs:
+    job-1:
+        runs-on: ubuntu-latest
+        steps:
+            - name: Display Message
+              run: echo "Building the project..."
