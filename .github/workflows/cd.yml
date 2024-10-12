@@ -1,5 +1,6 @@
 # Defines the name of the workflow as 'CD'
 name: CD
+run-name: Create release and deploy to windows server
 
 # Specifies the events that trigger the workflow
 on:
@@ -112,6 +113,6 @@ jobs:
 
       - name: Deploy to production
         run: |
-          chmod +x ./.github/bin/deploy.shds.re
+          chmod +x ./.github/bin/deploy.sh
           ./.github/bin/deploy.sh release-${{ needs.release-tag.outputs.version_tag }}
         shell: bash
