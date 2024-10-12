@@ -1,0 +1,127 @@
+# Defines the name of the workflow as 'CD'
+name: CI
+
+# Specifies the events that trigger the workflow
+on:
+  # Triggers the workflow when a pull request is opened, synchronized and merged
+  pull_request:
+    types:
+      - opened
+      - synchronize
+      - closed
+
+# Defines environment variables for the workflow
+env:
+  NODE_VERSION: 20.14.0
+
+# Defines a set of jobs that run in parallel
+jobs:
+  # This job will check the project lint and format
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION}}
+          cache: npm
+
+      - name: install projects dependencies & Validate linting and formatting
+        run: |
+          npm ci
+          npm run validate
+
+  # This job will generate the audit report
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION}}
+          cache: npm
+
+      - name: install projects dependencies & Generate Autdit Report
+        run: |
+          npm ci
+          npm run audit-report
+
+      - name: Upload Audit Reports
+        uses: actions/upload-artifact@v4
+        with:
+          name: audit-reports
+          path: artifacts/audit-reports
+          retention-days: 1
+
+  # This job will run e2e tests
+  test-e2e:
+    timeout-minutes: 5
+    runs-on: ubuntu-latest
+    container:
+      image: mcr.microsoft.com/playwright:v1.48.0-jammy
+      options: --user 1001
+    needs: [validate, audit]
+    # Defines permissions for test job
+    permissions:
+      contents: read
+      pull-requests: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION}}
+          cache: npm
+
+      - name: Install dependencies and Run playwright tests
+        run: |
+          npm ci
+          npm run e2e
+
+      - name: Upload Project Build
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: artifacts/playwright-report/
+          retention-days: 1
+
+      - name: Add e2e playwright result to PR Comment
+        uses: daun/playwright-report-summary@v3
+        if: always()
+        with:
+          report-file: artifacts/playwright-json/results.json
+
+  # This job will build next application
+  build-ui:
+    runs-on: ubuntu-latest
+    needs: [test-e2e]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION}}
+          cache: npm
+
+      - name: Install dependencies and build project
+        run: |
+          npm ci
+          npm run build
+
+      - name: Upload Project Build
+        uses: actions/upload-artifact@v4
+        with:
+          name: next-build
+          path: out
+          retention-days: 1

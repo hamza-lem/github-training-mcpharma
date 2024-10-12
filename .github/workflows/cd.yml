@@ -1,0 +1,117 @@
+# Defines the name of the workflow as 'CD'
+name: CD
+
+# Specifies the events that trigger the workflow
+on:
+  # Triggers the workflow manually
+  workflow_dispatch:
+    inputs:
+      tag_Bump:
+        description: 'Define the default_bump. Can be patch, minor or major You can also set false to avoid generating a new tag when none is explicitly provided.'
+        required: true
+        default: 'patch'
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+
+# Defines environment variables for the workflow
+env:
+  NODE_VERSION: 20.14.0
+
+# Defines permissions for the workflow
+permissions:
+  contents: write
+  repository-projects: write
+
+# Defines a set of jobs that run in parallel
+jobs:
+  # This job will create a new tag
+  release-tag:
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/master' || github.ref == 'refs/heads/main'
+    outputs:
+      version_tag: ${{ steps.tag_version.outputs.new_tag }}
+      changelog_tag: ${{ steps.tag_version.outputs.changelog }}
+      previous_vtag: ${{ steps.tag_version.outputs.previous_tag }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Bump version and push tag
+        id: tag_version
+        uses: mathieudutour/github-tag-action@v6.2
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          tag_prefix: v
+          default_bump: ${{ github.event.inputs.tag_Bump }}
+
+      - name: Save tag version
+        run: |
+          echo "version_tag=${{ steps.tag_version.outputs.new_tag }}" >> $GITHUB_OUTPUT
+          echo "changelog_tag=${{ steps.tag_version.outputs.changelog }}" >> $GITHUB_OUTPUT
+          echo "previous_vtag=${{ steps.tag_version.outputs.previous_tag }}" >> $GITHUB_OUTPUT
+
+  # This job will create a new branch with the given new tag (release-v1.0.0)
+  release-branch:
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/master' || github.ref == 'refs/heads/main'
+    needs: [release-tag]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v2
+
+      - name: Create Release Branch
+        uses: peterjgrainger/action-create-branch@v3.0.0
+
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+        with:
+          branch: 'release-${{ needs.release-tag.outputs.version_tag }}'
+
+  # This job will create the release note for the release with the changeslog
+  release-production:
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/master' || github.ref == 'refs/heads/main'
+    needs: [release-tag, release-branch]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v2
+
+      - name: Create Release
+        id: create_release
+        uses: ncipollo/release-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag: ${{ needs.release-tag.outputs.version_tag }}
+          name: Release ${{ needs.release-tag.outputs.version_tag }}
+          body: ${{ needs.release-tag.outputs.changelog_tag }}
+          generateReleaseNotes: true
+          draft: false
+          prerelease: false
+
+  # This job will deploy the nex app from the created release branch to windows server
+  deploy-release:
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/master' || github.ref == 'refs/heads/main'
+    needs: [release-tag, release-branch, release-production]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION}}
+
+      - name: Deploy to production
+        run: |
+          chmod +x ./.github/bin/deploy.shds.re
+          ./.github/bin/deploy.sh release-${{ needs.release-tag.outputs.version_tag }}
+        shell: bash
